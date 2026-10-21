@@ -45,7 +45,7 @@ try {
     $w = New-Object System.IO.StreamWriter($zip.CreateEntry($e[0]).Open(), $utf8)
     $w.Write($e[1]); $w.Close()
   }
-  $files = @('package.json', 'README.md') + (Get-ChildItem (Join-Path $root 'src'), (Join-Path $root 'media') -File | ForEach-Object { $_.FullName.Substring($root.Length + 1) })
+  $files = @('package.json', 'README.md', 'LICENSE') + (Get-ChildItem (Join-Path $root 'src'), (Join-Path $root 'media') -File | ForEach-Object { $_.FullName.Substring($root.Length + 1) })
   foreach ($f in $files) {
     # Zip entry paths must use "/" (PS 5.1 Compress-Archive writes backslashes, which VS Code cannot read)
     [void][System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, (Join-Path $root $f), 'extension/' + $f.Replace([char]92, [char]47))
