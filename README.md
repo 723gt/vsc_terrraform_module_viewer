@@ -26,11 +26,12 @@ Terraform モジュール（1 ディレクトリ内の `*.tf` ファイル群）
 
 ## 開発
 
-依存パッケージもビルド手順もありません（プレーン JavaScript）。
+拡張機能本体はプレーン JavaScript で、実行時の依存パッケージはありません。開発には Node.js 20 以上を使います。
 
+- **準備**: `npm install`
 - **デバッグ実行**: このフォルダを VS Code で開いて F5（`sample/s3-bucket` が開いた状態で起動します）
-- **パーサのテスト**: `node test/run.js`
-- **.vsix の作成**: `powershell -ExecutionPolicy Bypass -File scripts/build-vsix.ps1`
+- **パーサのテスト**: `npm test`
+- **.vsix の作成**: `npm run package`（[@vscode/vsce](https://github.com/microsoft/vscode-vsce) を使用）
 - **インストール**: `code --install-extension terraform-module-viewer-0.1.0.vsix`
 
 ## 制約
