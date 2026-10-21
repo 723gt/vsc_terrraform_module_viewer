@@ -1,0 +1,52 @@
+{
+  "name": "terraform-module-viewer",
+  "displayName": "Terraform Module Viewer",
+  "description": "Terraform モジュール（ディレクトリ内の .tf ファイル群）の variables / outputs / resources などを一覧表示するビューア",
+  "version": "0.1.0",
+  "publisher": "local",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Visualization",
+    "Other"
+  ],
+  "main": "./src/extension.js",
+  "activationEvents": [],
+  "contributes": {
+    "commands": [
+      {
+        "command": "terraformModuleViewer.open",
+        "title": "Terraform: モジュールビューアを開く",
+        "icon": "$(preview)"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "terraformModuleViewer.open",
+          "when": "resourceExtname == .tf",
+          "group": "navigation"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "terraformModuleViewer.open",
+          "when": "explorerResourceIsFolder || resourceExtname == .tf",
+          "group": "navigation@99"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Terraform Module Viewer",
+      "properties": {
+        "terraformModuleViewer.autoRefresh": {
+          "type": "boolean",
+          "default": true,
+          "description": ".tf ファイルの保存時にビューアを自動更新する"
+        }
+      }
+    }
+  }
+}
