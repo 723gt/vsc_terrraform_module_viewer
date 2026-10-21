@@ -52,5 +52,48 @@ const child = loadModule(m.modules[0].localPath);
 assert.deepStrictEqual(child.variables.map((x) => x.name), ['bucket_arn', 'password']);
 assert.ok(child.outputs[0].value.startsWith('jsonencode({'));
 
+// ---- ファイル単体表示 ----
+const dir = path.join(__dirname, '..', 'sample', 's3-bucket');
+const fm = loadModule(dir, { file: 'main.tf' });
+assert.deepStrictEqual(fm.scope, { file: 'main.tf' });
+assert.deepStrictEqual(fm.errors, []);
+assert.strictEqual(fm.variables.length, 0);
+assert.strictEqual(fm.outputs.length, 0);
+assert.strictEqual(fm.resources.length, 4);
+assert.strictEqual(fm.dataSources.length, 2);
+assert.strictEqual(fm.modules.length, 2);
+assert.strictEqual(fm.locals.length, 3);
+assert.strictEqual(fm.providers.length, 0);
+assert.strictEqual(fm.terraform.requiredVersion, undefined);
+assert.deepStrictEqual(fm.files.map((f) => f.file), ['main.tf']);
+// 未使用判定はディレクトリ全体で行う（common_tags は versions.tf からも参照される）
+assert.strictEqual(fm.locals.find((l) => l.name === 'common_tags').refs, 2);
+
+const ref = (kind, name) => fm.references.find((r) => r.kind === kind && r.name === name);
+assert.strictEqual(ref('var', 'lifecycle_rules').def.file, 'variables.tf');
+assert.strictEqual(ref('var', 'db_password').def.file, 'variables.tf');
+assert.strictEqual(ref('local', 'full_name').def.file, 'main.tf');
+assert.strictEqual(ref('module', 'policy').def.file, 'main.tf');
+assert.strictEqual(ref('data', 'aws_caller_identity.current').def.file, 'main.tf');
+assert.strictEqual(ref('resource', 'aws_s3_bucket.this').count, 6);
+// コメントや data.xxx の後半は拾わない
+assert.ok(!fm.references.some((r) => r.kind === 'resource' && r.name.indexOf('aws_caller_identity') === 0));
+assert.ok(!ref('resource', 'aws_s3_bucket.old'));
+
+const by = (kind, name, file) => fm.referencedBy.find((r) => r.kind === kind && r.name === name && r.file === file);
+assert.strictEqual(by('local', 'common_tags', 'versions.tf').line, 19);
+assert.strictEqual(by('resource', 'aws_s3_bucket.this', 'outputs.tf').count, 2);
+assert.strictEqual(by('module', 'policy', 'outputs.tf').count, 1);
+
+const vf = loadModule(dir, { file: 'variables.tf' });
+assert.strictEqual(vf.variables.length, 6);
+assert.strictEqual(vf.resources.length, 0);
+assert.deepStrictEqual(vf.references.map((r) => r.kind + ':' + r.name), ['var:bucket_name']);
+assert.ok(vf.referencedBy.some((r) => r.name === 'region' && r.file === 'versions.tf'));
+assert.ok(!vf.referencedBy.some((r) => r.name === 'unused_flag'));
+
+const missing = loadModule(dir, { file: 'nope.tf' });
+assert.strictEqual(missing.errors[0].file, 'nope.tf');
+
 console.log(usageSnippet(m, './sample/s3-bucket'));
 console.log('\nall assertions passed');

@@ -141,7 +141,7 @@
 
   function renderVariables(m, match) {
     const items = m.variables.filter((v) => match(v.name, v.description, v.type, v.default));
-    if (!items.length) return m.variables.length && state.query ? '' : section('variables', 'Variables（入力変数）', 0, '<p class="muted">なし</p>');
+    if (!items.length) return m.scope || (m.variables.length && state.query) ? '' : section('variables', 'Variables（入力変数）', 0, '<p class="muted">なし</p>');
     const required = items.filter((v) => !v.hasDefault).length;
     const rows = items.map((v) => {
       const flags = [];
@@ -168,7 +168,7 @@
 
   function renderOutputs(m, match) {
     const items = m.outputs.filter((o) => match(o.name, o.description, o.value));
-    if (!items.length) return m.outputs.length && state.query ? '' : section('outputs', 'Outputs（出力）', 0, '<p class="muted">なし</p>');
+    if (!items.length) return m.scope || (m.outputs.length && state.query) ? '' : section('outputs', 'Outputs（出力）', 0, '<p class="muted">なし</p>');
     const rows = items.map((o) =>
       '<tr><td>' + jump(o, '<b>' + esc(o.name) + '</b>') + (o.sensitive ? '<div class="flags">' + badge('sensitive', 'danger') + '</div>' : '') + '</td>' +
       '<td>' + code(o.value) + '</td><td>' + desc(o.description) + '</td><td>' + locLink(o) + '</td></tr>'
@@ -258,11 +258,52 @@
   }
 
   function renderFiles(m) {
+    if (m.scope) return '';
     const rows = m.files.map((f) =>
       '<tr><td>' + jump({ file: f.file, line: 1 }, esc(f.file)) + '</td><td class="num">' + f.lines + '</td><td>' +
-      Object.keys(f.blocks).map((k) => badge(k + ' ×' + f.blocks[k], 'dim')).join('') + '</td></tr>'
+      Object.keys(f.blocks).map((k) => badge(k + ' ×' + f.blocks[k], 'dim')).join('') + '</td>' +
+      '<td><a class="action" data-open-file="' + esc(f.file) + '">単体で表示</a></td></tr>'
     );
-    return section('files', 'ファイル', m.files.length, table(['ファイル', '行数', 'ブロック'], rows));
+    return section('files', 'ファイル', m.files.length, table(['ファイル', '行数', 'ブロック', ''], rows));
+  }
+
+  const KIND_LABEL = { var: 'var', local: 'local', module: 'module', data: 'data', resource: 'resource' };
+
+  function refName(r) {
+    return (r.kind === 'resource' ? '' : r.kind + '.') + r.name;
+  }
+
+  /** ファイル単体表示: このファイルが参照しているもの */
+  function renderReferences(m, match) {
+    if (!m.scope) return '';
+    const items = m.references.filter((r) => match(refName(r), r.def ? r.def.file : ''));
+    if (!items.length) return '';
+    const external = items.filter((r) => r.def && r.def.file !== m.scope.file).length;
+    const missing = items.filter((r) => !r.def).length;
+    const rows = items.map((r) => {
+      let where;
+      if (!r.def) where = badge(r.kind === 'var' || r.kind === 'local' || r.kind === 'module' ? '定義なし' : '不明', 'danger');
+      else if (r.def.file === m.scope.file) where = locLink(r.def) + ' ' + badge('同じファイル', 'dim');
+      else where = locLink(r.def);
+      return '<tr><td>' + badge(KIND_LABEL[r.kind], 'dim') + '</td><td>' +
+        (r.def ? jump(r.def, '<code class="code">' + hl(refName(r)) + '</code>') : '<code class="code">' + hl(refName(r)) + '</code>') +
+        '</td><td class="num">' + r.count + '</td><td>' + where + '</td></tr>';
+    });
+    const extra = ' <span class="sub-count">他ファイル ' + external + (missing ? ' / 定義なし ' + missing : '') + '</span>';
+    return section('references', 'このファイルが参照しているもの', items.length,
+      table(['種類', '参照', '回数', '定義場所'], rows), extra);
+  }
+
+  /** ファイル単体表示: このファイルの定義を参照している他ファイル */
+  function renderReferencedBy(m, match) {
+    if (!m.scope) return '';
+    const items = m.referencedBy.filter((r) => match(refName(r), r.file));
+    if (!items.length) return section('referencedBy', '他のファイルからの参照', 0, '<p class="muted">このファイルの定義は他のファイルから参照されていません</p>');
+    const rows = items.map((r) =>
+      '<tr><td>' + badge(KIND_LABEL[r.kind], 'dim') + '</td><td><code class="code">' + hl(refName(r)) + '</code></td>' +
+      '<td>' + locLink(r) + '</td><td class="num">' + r.count + '</td></tr>'
+    );
+    return section('referencedBy', '他のファイルからの参照', items.length, table(['種類', '定義', '参照元', '回数'], rows));
   }
 
   function summaryChips(m) {
@@ -275,6 +316,11 @@
       ['locals', 'Locals', m.locals.length],
       ['providers', 'Providers', m.providers.length],
     ];
+    if (m.scope) {
+      // ファイル単体表示では 0 件の項目を省き、参照の 2 セクションへのリンクを足す
+      for (let i = chips.length - 1; i >= 0; i--) if (!chips[i][2]) chips.splice(i, 1);
+      chips.push(['references', '参照', m.references.length], ['referencedBy', '他ファイルから', m.referencedBy.length]);
+    }
     return '<nav class="chips">' + chips.map((c) =>
       '<a class="chip' + (c[2] ? '' : ' zero') + '" data-scroll="' + c[0] + '"><span class="n">' + c[2] + '</span>' + c[1] + '</a>'
     ).join('') + '</nav>';
@@ -290,20 +336,29 @@
       return;
     }
     const match = matches();
+    const fileMode = !!m.scope;
+    const title = fileMode
+      ? '<h1>' + jump({ file: m.scope.file, line: 1 }, esc(m.scope.file)) + ' ' + badge('ファイル単体', 'info') + '</h1>' +
+        '<div class="path muted">モジュール: ' + esc(m.name) + ' — ' + esc(m.dir) + '</div>'
+      : '<h1>' + esc(m.name) + '</h1><div class="path muted">' + esc(m.dir) + '</div>';
+    const mainButton = fileMode
+      ? '<button id="btn-folder" title="このファイルがあるフォルダ全体をビューアで開く">フォルダ全体を表示</button>'
+      : '<button id="btn-usage" title="このモジュールを呼び出す module ブロックをコピー">使用例をコピー</button>';
     const header =
-      '<header><div class="title"><h1>' + esc(m.name) + '</h1><div class="path muted">' + esc(m.dir) + '</div></div>' +
+      '<header><div class="title">' + title + '</div>' +
       '<div class="actions"><input id="search" type="search" placeholder="フィルタ（名前・説明・値）" value="' + esc(state.query) + '">' +
-      '<button id="btn-usage" title="このモジュールを呼び出す module ブロックをコピー">使用例をコピー</button>' +
+      mainButton +
       '<button id="btn-expand" class="secondary" title="すべて展開/折りたたみ">展開</button>' +
       '<button id="btn-refresh" class="secondary" title="再読み込み">⟳</button></div></header>';
 
     let html = header + summaryChips(m);
-    if (!m.files.length) html += '<div class="error">このディレクトリに .tf ファイルがありません。</div>';
+    if (!m.files.length && !fileMode) html += '<div class="error">このディレクトリに .tf ファイルがありません。</div>';
     for (const e of m.errors) html += '<div class="error">' + esc(e.file) + ': ' + esc(e.message) + '</div>';
     html += renderTerraform(m) + renderVariables(m, match) + renderOutputs(m, match) +
       renderResourceList('resources', 'Resources（リソース）', m.resources, '', match) +
       renderResourceList('data', 'Data Sources', m.dataSources, 'data.', match) +
-      renderModules(m, match) + renderLocals(m, match) + renderProviders(m, match) + renderOthers(m, match) + renderFiles(m);
+      renderModules(m, match) + renderLocals(m, match) + renderProviders(m, match) + renderOthers(m, match) +
+      renderReferences(m, match) + renderReferencedBy(m, match) + renderFiles(m);
 
     const scrollY = window.scrollY;
     const hadFocus = document.activeElement && document.activeElement.id === 'search';
@@ -326,6 +381,11 @@
       ev.preventDefault();
       ev.stopPropagation();
       vscode.postMessage({ type: 'open', file: link.getAttribute('data-file'), line: Number(link.getAttribute('data-line')) });
+      return;
+    }
+    const fileLink = target.closest('[data-open-file]');
+    if (fileLink) {
+      vscode.postMessage({ type: 'openFile', file: fileLink.getAttribute('data-open-file') });
       return;
     }
     const mod = target.closest('[data-path]');
@@ -352,6 +412,7 @@
     }
     if (target.id === 'btn-refresh') vscode.postMessage({ type: 'refresh' });
     if (target.id === 'btn-usage') vscode.postMessage({ type: 'copyUsage' });
+    if (target.id === 'btn-folder') vscode.postMessage({ type: 'openFolder' });
     if (target.id === 'btn-expand') {
       const all = Array.from(document.querySelectorAll('details.res'));
       const open = all.some((d) => !d.open);

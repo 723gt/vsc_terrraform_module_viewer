@@ -18,8 +18,22 @@ function activate(context) {
         return;
       }
       ModulePanel.show(context, dir);
+    }),
+    vscode.commands.registerCommand('terraformModuleViewer.openFile', (uri) => {
+      const file = resolveTfFile(uri);
+      if (!file) {
+        vscode.window.showWarningMessage('.tf ファイルを選択してください。');
+        return;
+      }
+      ModulePanel.show(context, path.dirname(file), path.basename(file));
     })
   );
+}
+
+function resolveTfFile(uri) {
+  if (!uri && vscode.window.activeTextEditor) uri = vscode.window.activeTextEditor.document.uri;
+  if (!uri || uri.scheme !== 'file' || !uri.fsPath.endsWith('.tf')) return undefined;
+  return uri.fsPath;
 }
 
 function deactivate() {
@@ -38,20 +52,22 @@ function resolveModuleDir(uri) {
 }
 
 class ModulePanel {
-  static show(context, dir) {
-    const key = path.resolve(dir).toLowerCase();
+  /** file を指定するとそのファイル単体のビューになる */
+  static show(context, dir, file) {
+    const key = (path.resolve(dir) + '|' + (file || '')).toLowerCase();
     const existing = panels.get(key);
     if (existing) {
       existing.panel.reveal();
       existing.refresh();
       return;
     }
-    panels.set(key, new ModulePanel(context, dir, key));
+    panels.set(key, new ModulePanel(context, dir, key, file));
   }
 
-  constructor(context, dir, key) {
+  constructor(context, dir, key, file) {
     this.context = context;
     this.dir = dir;
+    this.file = file;
     this.key = key;
     this.disposables = [];
     this.refreshTimer = undefined;
@@ -59,7 +75,7 @@ class ModulePanel {
     const mediaRoot = vscode.Uri.file(path.join(context.extensionPath, 'media'));
     this.panel = vscode.window.createWebviewPanel(
       'terraformModuleViewer',
-      'TF: ' + path.basename(dir),
+      'TF: ' + (file || path.basename(dir)),
       { viewColumn: vscode.ViewColumn.Beside, preserveFocus: false },
       { enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [mediaRoot] }
     );
@@ -87,7 +103,7 @@ class ModulePanel {
   refresh() {
     let model;
     try {
-      model = loadModule(this.dir);
+      model = loadModule(this.dir, { file: this.file });
     } catch (e) {
       model = { dir: this.dir, name: path.basename(this.dir), fatal: String(e.message || e) };
     }
@@ -112,8 +128,14 @@ class ModulePanel {
         if (msg.path && fs.existsSync(msg.path)) ModulePanel.show(this.context, msg.path);
         else vscode.window.showWarningMessage('モジュールのディレクトリが見つかりません: ' + msg.path);
         break;
+      case 'openFile':
+        ModulePanel.show(this.context, this.dir, msg.file);
+        break;
+      case 'openFolder':
+        ModulePanel.show(this.context, this.dir);
+        break;
       case 'copyUsage': {
-        if (!this.model || this.model.fatal) return;
+        if (!this.model || this.model.fatal || this.file) return;
         await vscode.env.clipboard.writeText(usageSnippet(this.model, this.sourcePath()));
         vscode.window.showInformationMessage('module ブロックの使用例をクリップボードにコピーしました。');
         break;

@@ -50,8 +50,117 @@ function countRefs(texts, prefix, name) {
 
 /**
  * ディレクトリ内の *.tf を読み込み、モジュールの構造をまとめたモデルを返す。
+ * options.file を指定すると、そのファイルに定義されたブロックだけに絞ったモデルを返す
+ * （参照数や参照先の解決にはディレクトリ全体を使う）。
  */
-function loadModule(dir) {
+function loadModule(dir, options) {
+  const file = options && options.file;
+  if (!file) return loadDirectory(dir).model;
+
+  const full = loadDirectory(dir);
+  const all = full.model;
+  const inFile = (x) => x.file === file;
+  const t = all.terraform;
+  const model = Object.assign({}, all, {
+    scope: { file },
+    files: all.files.filter(inFile),
+    errors: all.errors.filter(inFile),
+    terraform: {
+      requiredVersion: t.requiredVersionFile === file ? t.requiredVersion : undefined,
+      requiredProviders: t.requiredProviders.filter(inFile),
+      backend: t.backend && inFile(t.backend) ? t.backend : undefined,
+    },
+    variables: all.variables.filter(inFile),
+    outputs: all.outputs.filter(inFile),
+    resources: all.resources.filter(inFile),
+    dataSources: all.dataSources.filter(inFile),
+    modules: all.modules.filter(inFile),
+    locals: all.locals.filter(inFile),
+    providers: all.providers.filter(inFile),
+    others: all.others.filter(inFile),
+  });
+  if (!all.files.some(inFile) && !model.errors.length) {
+    model.errors.push({ file, message: 'ファイルが見つかりません' });
+  }
+  model.references = full.texts[file] != null ? collectReferences(full.texts[file], all) : [];
+  model.referencedBy = collectReferencedBy(model, full.texts, file);
+  return model;
+}
+
+const REF_KINDS = [
+  // [kind, 正規表現, 定義の探し方]
+  ['var', /\bvar\.([A-Za-z_][\w-]*)/g, (m, all) => all.variables.find((x) => x.name === m[1])],
+  ['local', /\blocal\.([A-Za-z_][\w-]*)/g, (m, all) => all.locals.find((x) => x.name === m[1])],
+  ['module', /\bmodule\.([A-Za-z_][\w-]*)/g, (m, all) => all.modules.find((x) => x.name === m[1])],
+  ['data', /\bdata\.([A-Za-z_][\w-]*)\.([A-Za-z_][\w-]*)/g,
+    (m, all) => all.dataSources.find((x) => x.resourceType === m[1] && x.name === m[2])],
+];
+
+/** コメントを空白に置き換える（行番号を保つため長さは変えない）。文字列の中の # や // は残す */
+function stripComments(text) {
+  return text.replace(/("(?:[^"\\\n]|\\.)*")|#[^\n]*|\/\/[^\n]*|\/\*[\s\S]*?\*\//g, (m, str) =>
+    str ? m : m.replace(/[^\n]/g, ' '));
+}
+
+/**
+ * ファイル内の var. / local. / module. / data. / リソース参照を集め、定義位置と結び付ける。
+ * 定義が見つからない参照も undefined のまま返す。
+ */
+function collectReferences(text, all) {
+  const src = stripComments(text);
+  const refs = new Map();
+  const add = (kind, name, def) => {
+    const key = kind + ':' + name;
+    const r = refs.get(key) || { kind, name, count: 0, def: def ? { file: def.file, line: def.line } : undefined };
+    r.count++;
+    refs.set(key, r);
+  };
+
+  for (const [kind, re, find] of REF_KINDS) {
+    re.lastIndex = 0;
+    let m;
+    while ((m = re.exec(src))) add(kind, m.slice(1).join('.'), find(m, all));
+  }
+
+  // リソース参照（aws_s3_bucket.this など）。定義済みの type.name だけを拾う
+  const resources = new Map(all.resources.map((r) => [r.resourceType + '.' + r.name, r]));
+  const resRe = /\b([A-Za-z][\w-]*)\.([A-Za-z_][\w-]*)/g;
+  let m;
+  while ((m = resRe.exec(src))) {
+    const def = resources.get(m[1] + '.' + m[2]);
+    // data.aws_x.y の後半や、resource ブロック自身のラベルは除外
+    if (def && src.slice(Math.max(0, m.index - 5), m.index) !== 'data.') add('resource', m[1] + '.' + m[2], def);
+  }
+
+  const order = ['var', 'local', 'module', 'data', 'resource'];
+  return Array.from(refs.values()).sort((a, b) =>
+    order.indexOf(a.kind) - order.indexOf(b.kind) || a.name.localeCompare(b.name));
+}
+
+/** このファイルで定義されたものを、他のファイルから参照している箇所の件数 */
+function collectReferencedBy(model, texts, file) {
+  const targets = []
+    .concat(model.variables.map((v) => ({ kind: 'var', name: v.name, re: 'var\\.' + v.name })))
+    .concat(model.locals.map((l) => ({ kind: 'local', name: l.name, re: 'local\\.' + l.name })))
+    .concat(model.modules.map((x) => ({ kind: 'module', name: x.name, re: 'module\\.' + x.name })))
+    .concat(model.dataSources.map((d) => ({ kind: 'data', name: d.resourceType + '.' + d.name, re: 'data\\.' + d.resourceType + '\\.' + d.name })))
+    .concat(model.resources.map((r) => ({ kind: 'resource', name: r.resourceType + '.' + r.name, re: '(?<!data\\.)' + r.resourceType + '\\.' + r.name })));
+  const result = [];
+  for (const other of Object.keys(texts).sort()) {
+    if (other === file) continue;
+    const src = stripComments(texts[other]);
+    for (const t of targets) {
+      const re = new RegExp('\\b' + t.re.replace(/-/g, '\\-') + '\\b', 'g');
+      const lines = [];
+      let m;
+      while ((m = re.exec(src))) lines.push(src.slice(0, m.index).split('\n').length);
+      if (lines.length) result.push({ kind: t.kind, name: t.name, file: other, line: lines[0], count: lines.length });
+    }
+  }
+  return result;
+}
+
+function loadDirectory(dir) {
   const files = fs
     .readdirSync(dir)
     .filter((f) => f.endsWith('.tf'))
@@ -73,7 +182,7 @@ function loadModule(dir) {
     others: [],
   };
 
-  const texts = [];
+  const texts = {};
 
   for (const file of files) {
     const full = path.join(dir, file);
@@ -84,7 +193,7 @@ function loadModule(dir) {
       model.errors.push({ file, message: String(e.message || e) });
       continue;
     }
-    texts.push(text);
+    texts[file] = text;
 
     let body;
     try {
@@ -103,10 +212,11 @@ function loadModule(dir) {
   }
 
   // 参照数（同一モジュール内での var.x / local.x の出現回数）
-  for (const v of model.variables) v.refs = countRefs(texts, 'var', v.name);
-  for (const l of model.locals) l.refs = countRefs(texts, 'local', l.name);
+  const allTexts = Object.keys(texts).map((f) => texts[f]);
+  for (const v of model.variables) v.refs = countRefs(allTexts, 'var', v.name);
+  for (const l of model.locals) l.refs = countRefs(allTexts, 'local', l.name);
 
-  return model;
+  return { model, texts };
 }
 
 function collectBlock(model, file, b) {
@@ -199,7 +309,10 @@ function collectBlock(model, file, b) {
     case 'terraform': {
       const t = model.terraform;
       const rv = attrString(b, 'required_version');
-      if (rv) t.requiredVersion = rv;
+      if (rv) {
+        t.requiredVersion = rv;
+        t.requiredVersionFile = file;
+      }
       for (const sub of b.blocks) {
         if (sub.type === 'required_providers') {
           for (const a of sub.attributes) {

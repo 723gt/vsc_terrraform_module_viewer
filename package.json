@@ -2,7 +2,7 @@
   "name": "terraform-module-viewer",
   "displayName": "Terraform Module Viewer",
   "description": "Terraform モジュール（ディレクトリ内の .tf ファイル群）の variables / outputs / resources などを一覧表示するビューア",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "local",
   "license": "MIT",
   "repository": {
@@ -24,6 +24,11 @@
         "command": "terraformModuleViewer.open",
         "title": "Terraform: モジュールビューアを開く",
         "icon": "$(preview)"
+      },
+      {
+        "command": "terraformModuleViewer.openFile",
+        "title": "Terraform: このファイルだけをビューアで開く",
+        "icon": "$(file-code)"
       }
     ],
     "menus": {
@@ -32,12 +37,36 @@
           "command": "terraformModuleViewer.open",
           "when": "resourceExtname == .tf",
           "group": "navigation"
+        },
+        {
+          "command": "terraformModuleViewer.openFile",
+          "when": "resourceExtname == .tf",
+          "group": "navigation"
+        }
+      ],
+      "editor/title/context": [
+        {
+          "command": "terraformModuleViewer.openFile",
+          "when": "resourceExtname == .tf",
+          "group": "terraform@1"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "terraformModuleViewer.openFile",
+          "when": "resourceExtname == .tf",
+          "group": "terraform@1"
         }
       ],
       "explorer/context": [
         {
           "command": "terraformModuleViewer.open",
           "when": "explorerResourceIsFolder || resourceExtname == .tf",
+          "group": "navigation@99"
+        },
+        {
+          "command": "terraformModuleViewer.openFile",
+          "when": "resourceExtname == .tf",
           "group": "navigation@99"
         }
       ]
