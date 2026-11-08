@@ -21,6 +21,42 @@ Terraform モジュール（1 ディレクトリ内の `*.tf` ファイル群）
 - `.tf` の保存・追加・削除で自動更新（設定 `terraformModuleViewer.autoRefresh`）
 - VS Code のテーマ色に追従（ダーク / ライト）
 
+## インストール
+
+この拡張は `.vsix` ファイルで配布しています（Marketplace には未公開）。
+
+### 1. `.vsix` を入手する
+
+次のどちらかで入手します。
+
+- **GitHub Releases からダウンロード**: [Releases](https://github.com/723gt/vsc_terrraform_module_viewer/releases) から最新の `terraform-module-viewer-<version>.vsix` をダウンロード
+- **自分でビルド**: Node.js 20 以上を用意し、リポジトリのルートで次を実行
+
+  ```bash
+  npm install
+  npm run package
+  ```
+
+  ルートに `terraform-module-viewer-<version>.vsix` ができます。
+
+### 2. VS Code にインストールする
+
+次のどちらかでインストールします。
+
+- **画面から**: 拡張機能ビュー（`Ctrl+Shift+X` / `Cmd+Shift+X`）右上の「…」→「VSIX からのインストール…」→ ダウンロードした `.vsix` を選択
+- **コマンドから**:
+
+  ```bash
+  code --install-extension terraform-module-viewer-0.2.0.vsix
+  ```
+
+インストール後、必要に応じて VS Code を再読み込みしてください。
+
+### 更新・アンインストール
+
+- **更新**: `.vsix` は自動更新されません。新しい `.vsix` を入手して、同じ手順でインストールし直してください（上書きされます）
+- **アンインストール**: 拡張機能ビューで「Terraform Module Viewer」を右クリック →「アンインストール」、またはコマンド `code --uninstall-extension local.terraform-module-viewer`
+
 ## 使い方
 
 - `.tf` ファイルを開いてエディタ右上のプレビューアイコンをクリック
@@ -43,7 +79,8 @@ Terraform モジュール（1 ディレクトリ内の `*.tf` ファイル群）
 - **デバッグ実行**: このフォルダを VS Code で開いて F5（`sample/s3-bucket` が開いた状態で起動します）
 - **パーサのテスト**: `npm test`
 - **.vsix の作成**: `npm run package`（[@vscode/vsce](https://github.com/microsoft/vscode-vsce) を使用）
-- **インストール**: `code --install-extension terraform-module-viewer-0.1.0.vsix`
+- **インストール**: `code --install-extension terraform-module-viewer-0.2.0.vsix`
+- **リリース**: `main` へのマージ・push のたびに GitHub Actions（`.github/workflows/release.yml`）が `.vsix` をビルドし、`package.json` の `version` をタグ名（例: `v0.2.0`）にした GitHub Release に添付します。新しいリリースを出すときは `version` を上げてからマージします。`version` を変えずにマージした場合は、同じ Release の `.vsix` が最新のビルドで置き換わります
 
 ## 制約
 
